@@ -224,7 +224,8 @@ class RagEngine:
 
     def recuperar_bm25(self, pergunta: str, k: int = 3) -> list[dict]:
         self._garantir_indice()
-        scores = self.indice_bm25.get_scores(tokenizar(pergunta))
+        termos_consulta = termos_relevantes(pergunta) or tokenizar(pergunta)
+        scores = self.indice_bm25.get_scores(termos_consulta)
         idx = np.argsort(scores)[::-1][:k]
         return [self._formatar_resultado(i, float(scores[i])) for i in idx]
 
@@ -241,7 +242,8 @@ class RagEngine:
         if self.modelo_embed is None or self.matriz_emb is None:
             return self.recuperar_bm25(pergunta, k=k)
         alpha = self.config.alpha_hibrido if alpha is None else alpha
-        score_bm25 = np.array(self.indice_bm25.get_scores(tokenizar(pergunta)), dtype="float32")
+        termos_consulta = termos_relevantes(pergunta) or tokenizar(pergunta)
+        score_bm25 = np.array(self.indice_bm25.get_scores(termos_consulta), dtype="float32")
         q = self.modelo_embed.encode([pergunta], normalize_embeddings=True).astype("float32")
         score_dense = np.dot(self.matriz_emb, q[0])
         score_final = alpha * normalizar(score_dense) + (1.0 - alpha) * normalizar(score_bm25)
@@ -297,7 +299,28 @@ class RagEngine:
         tem_similaridade_minima = diagnostico["score_dense_top"] >= self.config.min_score_dense
         return not (tem_termo_no_contexto or tem_similaridade_minima)
 
-    def responder(self, pergunta: str, metodo: str = "hibrido", k: int = 3) -> dict:
+    def _resposta_extrativa(self, docs: list[dict]) -> str:
+        trechos = []
+        for indice, doc in enumerate(docs[:3], start=1):
+            texto = re.sub(r"\s+", " ", str(doc.get("texto", ""))).strip()
+            if len(texto) > 520:
+                texto = texto[:517].rstrip() + "..."
+            trechos.append(
+                f"{indice}. **{doc.get('fonte', 'material local')}**\n{texto}"
+            )
+        return (
+            "Encontrei evidências nos materiais cadastrados. Como a LLM remota está "
+            "indisponível, apresento os trechos recuperados sem reescrita:\n\n"
+            + "\n\n".join(trechos)
+        )
+
+    def responder(
+        self,
+        pergunta: str,
+        metodo: str = "hibrido",
+        k: int = 3,
+        usar_llm: bool = True,
+    ) -> dict:
         docs = self.buscar(pergunta, metodo=metodo, k=k)
         diagnostico = self._diagnosticar_relevancia(pergunta, docs)
 
@@ -308,6 +331,20 @@ class RagEngine:
                 "fonte_resposta": "sem_material_cadastrado",
                 "documentos_recuperados": docs,
                 "diagnostico_recuperacao": diagnostico,
+            }
+
+        resposta_base = {
+            "resultado_vazio": False,
+            "fonte_resposta": "materiais_rag",
+            "documentos_recuperados": docs,
+            "diagnostico_recuperacao": diagnostico,
+        }
+        if not usar_llm:
+            return {
+                **resposta_base,
+                "resposta": self._resposta_extrativa(docs),
+                "modo_resposta": "rag_extrativo_sem_llm",
+                "fallback_sem_llm": True,
             }
 
         contexto = "\n\n".join(
@@ -321,14 +358,27 @@ class RagEngine:
             f"Contexto:\n{contexto}\n\nPergunta: {pergunta}"
         )
         llm = GemmaClient()
-        resposta = llm.chat([
-            {"role": "system", "content": "Você responde perguntas acadêmicas com base em evidências recuperadas."},
-            {"role": "user", "content": prompt},
-        ])
+        try:
+            resposta = llm.chat([
+                {"role": "system", "content": "Você responde perguntas acadêmicas com base em evidências recuperadas."},
+                {"role": "user", "content": prompt},
+            ])
+        except Exception as exc:
+            return {
+                **resposta_base,
+                "resposta": self._resposta_extrativa(docs),
+                "modo_resposta": "rag_extrativo_sem_llm",
+                "fallback_sem_llm": True,
+                "fallback_origem": "geracao_resposta_rag",
+                "erro_llm_etapa": "geracao_resposta_rag",
+                "erro_llm_tipo": type(exc).__name__,
+                "erro_llm_mensagem": (
+                    "A LLM remota falhou ao redigir a resposta. "
+                    "Os trechos locais foram preservados sem reescrita."
+                ),
+            }
         return {
+            **resposta_base,
             "resposta": resposta,
-            "resultado_vazio": False,
-            "fonte_resposta": "materiais_rag",
-            "documentos_recuperados": docs,
-            "diagnostico_recuperacao": diagnostico,
+            "modo_resposta": "rag_gerado_com_llm",
         }

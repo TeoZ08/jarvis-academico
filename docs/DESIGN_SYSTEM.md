@@ -12,6 +12,7 @@ Sensação desejada: acadêmico, técnico, autoral, silencioso, premium, cósmic
 
 - A conversa é o centro da experiência.
 - Evidências, fontes e ferramentas devem estar sempre próximas da resposta.
+- Agenda e tarefas são recursos operacionais: o usuário deve conseguir cadastrar dados, não apenas consultá-los.
 - A interface deve parecer produto acadêmico, não dashboard gamer, cripto ou template genérico de IA.
 - Estados técnicos devem ser legíveis sem depender só de cor.
 - Cards são reservados para unidades independentes; listas e linhas resolvem conteúdo secundário.
@@ -88,6 +89,15 @@ Uso:
 
 A assinatura do JARVIS é o **Inspector acadêmico**: fontes, ferramentas, tarefas, agenda e logs perto da conversa, com metadados em mono e detalhes malva/lavanda que conectam RAG, tool calling e evidências.
 
+Estados de resiliência usam os mesmos padrões:
+
+- `RAG fundamentado` usa a cor de marca;
+- `RAG sem LLM` usa o estado semântico de aviso;
+- `LLM indisponível` usa erro controlado no status superior;
+- ausência de fontes explica se o RAG ainda não rodou ou se rodou sem evidência suficiente.
+
+O formulário da Agenda reutiliza superfícies, raios, spacing, foco e botão primário existentes. Em mobile, os campos passam para uma coluna e mantêm alvos mínimos de toque.
+
 ## Contexto fixo da interface
 
 A área principal do chat deve representar a disciplina inteira:
@@ -107,3 +117,4 @@ Não usar título fixo que limite o sistema a uma prova específica. A palavra �
 - Botões de ícone com `title` ou `aria-label`.
 - Contraste adequado nos dois temas.
 - Sem informação transmitida apenas por cor.
+- Feedback de formulários usa texto, `role` apropriado e `aria-live`.

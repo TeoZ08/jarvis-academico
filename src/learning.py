@@ -49,7 +49,12 @@ class LearningService:
 
     def __init__(self, rag: RagEngine | None = None, llm: GemmaClient | None = None) -> None:
         self.rag = rag or RagEngine(carregar_agora=True)
-        self.llm = llm or GemmaClient()
+        self.llm = llm
+
+    def _get_llm(self) -> GemmaClient:
+        if self.llm is None:
+            self.llm = GemmaClient()
+        return self.llm
 
     def gerar_pergunta_revisao(self, disciplina: str = "Inteligência Artificial", tema: str = "", k: int = 3) -> dict[str, Any]:
         query = (tema or disciplina or "Inteligência Artificial").strip()
@@ -87,7 +92,7 @@ Contexto:
 {contexto_compacto}
 """.strip()
 
-        pergunta = self.llm.chat([
+        pergunta = self._get_llm().chat([
             {"role": "system", "content": "Você gera perguntas acadêmicas objetivas com base no contexto."},
             {"role": "user", "content": prompt},
         ], temperature=0.2, max_tokens=180)
@@ -124,7 +129,7 @@ Responda EXCLUSIVAMENTE com JSON válido neste formato:
 }}
 """.strip()
 
-        texto = self.llm.chat([
+        texto = self._get_llm().chat([
             {"role": "system", "content": "Você avalia respostas e devolve apenas JSON válido."},
             {"role": "user", "content": prompt},
         ], temperature=0.0, max_tokens=320)

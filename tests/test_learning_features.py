@@ -1,3 +1,5 @@
+import src.learning as learning_module
+from src.learning import LearningService
 from src.rag import RagEngine
 from src.storage import Dificuldade, Revisao
 from src.tools import TOOL_SPECS, ToolRegistry
@@ -35,3 +37,14 @@ def test_tool_registry_expoe_funcoes_novas_sem_executar_llm():
     registry = ToolRegistry(rag=RagEngine(carregar_agora=False))
     for nome in ["iniciar_revisao", "avaliar_resposta_revisao", "registrar_dificuldade", "listar_dificuldades", "adicionar_evento"]:
         assert nome in registry.funcoes
+
+
+def test_learning_service_adia_inicializacao_da_llm(monkeypatch):
+    def falhar_inicializacao():
+        raise RuntimeError("LLM indisponível")
+
+    monkeypatch.setattr(learning_module, "GemmaClient", falhar_inicializacao)
+
+    service = LearningService(rag=RagEngine(carregar_agora=False))
+
+    assert service.llm is None

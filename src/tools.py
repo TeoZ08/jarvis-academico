@@ -141,13 +141,20 @@ class ToolRegistry:
             "planejar_estudos": self.planejar_estudos,
         }
 
-    def executar(self, nome: str, argumentos: dict[str, Any]) -> Any:
+    def executar(
+        self,
+        nome: str,
+        argumentos: dict[str, Any],
+        metadados_saida: dict[str, Any] | None = None,
+    ) -> Any:
         if nome not in self.funcoes:
             raise ValueError(f"Ferramenta desconhecida: {nome}")
         try:
             saida = self.funcoes[nome](**argumentos)
         except TypeError as exc:
             raise ValueError(f"Argumentos inválidos para {nome}: {argumentos}") from exc
+        if metadados_saida and isinstance(saida, dict):
+            saida = {**saida, **metadados_saida}
         registrar_tool_call(nome, argumentos, saida)
         return saida
 
@@ -183,8 +190,19 @@ class ToolRegistry:
     def concluir_tarefa(self, tarefa_id_ou_titulo: str) -> dict:
         return self.tarefas.concluir(tarefa_id_ou_titulo)
 
-    def buscar_material_rag(self, pergunta: str, metodo: str = "hibrido", k: int = 3) -> dict:
-        return self.rag.responder(pergunta=pergunta, metodo=metodo, k=int(k))
+    def buscar_material_rag(
+        self,
+        pergunta: str,
+        metodo: str = "hibrido",
+        k: int = 3,
+        sem_llm: bool = False,
+    ) -> dict:
+        return self.rag.responder(
+            pergunta=pergunta,
+            metodo=metodo,
+            k=int(k),
+            usar_llm=not bool(sem_llm),
+        )
 
     def gerar_exercicios(self, tema: str, quantidade: int = 3) -> dict:
         pergunta = f"Explique os principais conceitos sobre {tema} para criar exercícios."

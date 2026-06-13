@@ -216,3 +216,50 @@ O backend passou a tratar `gemma`, `qwen`, `remote` e `openai_compatible` como m
 ### Resultado
 
 O deploy continua compatível com `LLM_MODE=gemma` e `GEMMA_*`, mas a interface e a documentação indicam que esses nomes são legados e que o modelo atual é Qwen.
+
+---
+
+## 9. Falha: RAG inacessível quando a LLM remota falhava
+
+### Sintoma
+
+Uma pergunta como `O que é RAG?` retornava erro 401, timeout ou falha de conexão antes de consultar a base local, mesmo com documentos e chunks carregados.
+
+### Causa
+
+O agente dependia da LLM para decidir a chamada de `buscar_material_rag`. Além disso, o próprio RAG usava a LLM para redigir a resposta após recuperar os documentos.
+
+### Correção
+
+Foi adicionado um fluxo resiliente:
+
+1. falhas técnicas ou JSON inválido na decisão são capturados;
+2. uma heurística simples separa perguntas acadêmicas de conversa casual;
+3. perguntas acadêmicas executam `buscar_material_rag` diretamente;
+4. o RAG apresenta trechos locais sem reescrita quando a LLM não pode ser usada;
+5. logs registram `fallback_sem_llm`, etapa, provider e tipo seguro do erro;
+6. nenhuma chave ou mensagem técnica bruta é exposta.
+
+### Resultado
+
+O chat não retorna 500 apenas porque a LLM está indisponível. Fontes, scores, tool calls e evidências continuam auditáveis. Se não houver evidência local, a resposta informa simultaneamente a ausência de material e a indisponibilidade da LLM.
+
+---
+
+## 10. Falha: Agenda apenas consultiva
+
+### Sintoma
+
+A aba Agenda exibia eventos, mas não permitia cadastrar aulas, provas, entregas ou revisões manualmente.
+
+### Causa
+
+O endpoint `POST /api/agenda` já existia, porém não estava conectado a um formulário no frontend.
+
+### Correção
+
+Foi criado um formulário responsivo com título, data, horários, tipo e observação. O frontend valida campos obrigatórios e ordem dos horários; a API repete essas validações. Após salvar, a lista e o inspector são atualizados sem recarregar a página.
+
+### Resultado
+
+A Agenda passou a ser um recurso operacional coerente com Tarefas e com a ferramenta de planejamento do JARVIS.

@@ -86,7 +86,11 @@ async function apiFetch(path, options = {}) {
     let detail = `Erro HTTP ${response.status}`;
     try {
       const data = await response.json();
-      detail = data.detail || detail;
+      if (Array.isArray(data.detail)) {
+        detail = data.detail.map((item) => item.msg || item.message).filter(Boolean).join(' ');
+      } else {
+        detail = data.detail || detail;
+      }
     } catch {
       // mantém erro padrão
     }
@@ -128,10 +132,13 @@ function humanToolName(tool) {
   return names[tool] || tool || 'Ferramenta';
 }
 
-function inferMode(toolCalls = []) {
+function inferMode(toolCalls = [], fallbackSemLlm = false) {
+  if (fallbackSemLlm && !toolCalls.length) return { label: 'LLM indisponível', tone: 'warning' };
   if (!toolCalls.length) return { label: 'Resposta direta', tone: 'neutral' };
+  const hasLlmFallback = toolCalls.some((call) => call?.saida?.fallback_sem_llm);
   const hasEmpty = toolCalls.some((call) => call?.saida?.resultado_vazio);
   const hasRag = toolCalls.some((call) => call?.tool === 'buscar_material_rag');
+  if (hasLlmFallback) return { label: 'RAG sem LLM', tone: 'warning' };
   if (hasEmpty) return { label: 'Fallback acadêmico', tone: 'warning' };
   if (hasRag) return { label: 'RAG fundamentado', tone: 'rag' };
   return { label: 'Tool calling', tone: 'info' };
@@ -141,9 +148,10 @@ function formatScore(score) {
   return typeof score === 'number' ? score.toFixed(3) : '—';
 }
 
-function getLlmStatusLabel(status) {
+function getLlmStatusLabel(status, unavailable = false) {
   if (!status) return 'carregando';
   if (status.usando_mock) return 'mock';
+  if (unavailable) return 'LLM indisponível';
 
   const model = status.llm_provider_label || status.llm_model || status.gemma_model || '';
   if (/qwen/i.test(model)) return 'Qwen remoto';
@@ -151,8 +159,9 @@ function getLlmStatusLabel(status) {
   return status.llm_provider || status.modo_llm || status.llm_mode || 'LLM remota';
 }
 
-function getLlmStatusTitle(status) {
+function getLlmStatusTitle(status, unavailable = false) {
   if (!status) return 'Carregando status da LLM';
+  if (unavailable) return 'A última chamada à LLM falhou; o RAG local continua disponível';
   return [
     status.llm_provider || 'LLM',
     status.llm_provider_label || status.llm_model || status.gemma_model || status.modo_llm,
@@ -176,6 +185,7 @@ function getLogDiagnostics(log) {
     docs,
     bestScore,
     isRag: log?.ferramenta === 'buscar_material_rag',
+    isLlmFallback: Boolean(output.fallback_sem_llm),
     isFallback: Boolean(output.resultado_vazio) || String(output.resposta || '').includes('Não encontrei esse tema'),
     method: log?.entrada?.metodo || output?.diagnostico_recuperacao?.modo_recuperacao || '—',
     k: log?.entrada?.k || output?.diagnostico_recuperacao?.top_k || '—',
@@ -186,7 +196,10 @@ function getLogDiagnostics(log) {
 function getEvidenceMetrics(logs = []) {
   const latest = logs[0] || null;
   const ragCalls = logs.filter((log) => log.ferramenta === 'buscar_material_rag');
-  const fallbackCalls = logs.filter((log) => getLogDiagnostics(log).isFallback);
+  const fallbackCalls = logs.filter((log) => {
+    const diagnostics = getLogDiagnostics(log);
+    return diagnostics.isFallback || diagnostics.isLlmFallback;
+  });
   const tools = new Set(logs.map((log) => log.ferramenta).filter(Boolean));
   const recoveredDocs = logs.reduce((acc, log) => acc + getLogDocs(log).filter((doc) => (doc.score ?? 0) > 0.0001).length, 0);
 
@@ -281,9 +294,9 @@ function MobileNav({ active, setActive }) {
   );
 }
 
-function StatusBar({ status, onRefresh, theme, onToggleTheme }) {
+function StatusBar({ status, onRefresh, theme, onToggleTheme, llmUnavailable }) {
   const base = status?.base_rag || {};
-  const llmStatusClass = status?.usando_mock ? 'mock' : 'remote';
+  const llmStatusClass = status?.usando_mock ? 'mock' : llmUnavailable ? 'unavailable' : 'remote';
   const themeLabel = theme === 'dark' ? 'Usar tema claro' : 'Usar tema escuro';
   return (
     <header className="topbar">
@@ -293,8 +306,8 @@ function StatusBar({ status, onRefresh, theme, onToggleTheme }) {
         <p className="topbar-copy">Consulta, planejamento e evidências em uma única sessão.</p>
       </div>
       <div className="topbar-actions">
-        <span className={`status-pill ${llmStatusClass}`} title={getLlmStatusTitle(status)}>
-          <Gauge size={14} /> {getLlmStatusLabel(status)}
+        <span className={`status-pill ${llmStatusClass}`} title={getLlmStatusTitle(status, llmUnavailable)}>
+          <Gauge size={14} /> {getLlmStatusLabel(status, llmUnavailable)}
         </span>
         <span className="status-pill"><Database size={14} /> {base.chunks ?? 0} chunks</span>
         <button
@@ -316,7 +329,7 @@ function StatusBar({ status, onRefresh, theme, onToggleTheme }) {
 
 function MessageBubble({ message }) {
   const isUser = message.role === 'user';
-  const mode = inferMode(message.tool_calls);
+  const mode = inferMode(message.tool_calls, message.fallback_sem_llm);
   return (
     <article className={`message ${isUser ? 'user' : 'assistant'}`}>
       <div className="message-avatar">
@@ -461,6 +474,8 @@ function ChatPanel({ messages, input, setInput, onSubmit, isLoading, onQuickProm
 function ContextPanel({ selectedMessage, logs, tasks, agenda, status, collapsed, onToggle }) {
   const toolCalls = selectedMessage?.tool_calls || [];
   const sources = selectedMessage?.sources || [];
+  const ragExecutado = toolCalls.some((call) => call?.tool === 'buscar_material_rag');
+  const eventosRecentes = [...agenda].slice(-2).reverse();
 
   return (
     <aside className={`context-panel ${collapsed ? 'collapsed' : ''}`} aria-label="Inspector acadêmico">
@@ -495,7 +510,13 @@ function ContextPanel({ selectedMessage, logs, tasks, agenda, status, collapsed,
             <p>{source.texto ? `${source.texto.slice(0, 170)}...` : 'Trecho recuperado pelo RAG.'}</p>
             {typeof source.score === 'number' && <span>score {source.score.toFixed(3)}</span>}
           </div>
-        )) : <p className="muted">As fontes recuperadas aparecerão aqui após uma consulta RAG.</p>}
+        )) : (
+          <p className="muted">
+            {ragExecutado
+              ? 'A busca RAG foi executada, mas não encontrou evidência suficiente para este turno.'
+              : 'As fontes recuperadas aparecerão aqui após uma consulta RAG.'}
+          </p>
+        )}
       </section>
 
       <section className="context-card">
@@ -521,7 +542,7 @@ function ContextPanel({ selectedMessage, logs, tasks, agenda, status, collapsed,
 
       <section className="context-card compact-list">
         <div className="context-title"><CalendarDays size={17} /> Agenda</div>
-        {agenda.slice(0, 2).map((event, index) => (
+        {eventosRecentes.map((event, index) => (
           <div className="mini-item" key={`${event.data}-${index}`}>
             <span>{event.titulo}</span>
             <small>{event.data} {event.hora_inicio || ''}</small>
@@ -658,28 +679,159 @@ function TasksView({ tasks, refresh }) {
   );
 }
 
-function AgendaView({ agenda }) {
+const emptyAgendaForm = {
+  titulo: '',
+  data: '',
+  hora_inicio: '',
+  hora_fim: '',
+  tipo: 'estudo',
+  observacao: '',
+};
+
+function AgendaView({ agenda, refresh }) {
+  const [form, setForm] = useState(emptyAgendaForm);
+  const [feedback, setFeedback] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  function updateField(field, value) {
+    setForm((current) => ({ ...current, [field]: value }));
+  }
+
+  async function addEvent(event) {
+    event.preventDefault();
+    setFeedback(null);
+
+    if (!form.titulo.trim() || !form.data) {
+      setFeedback({ type: 'error', message: 'Informe o título e a data do evento.' });
+      return;
+    }
+    if (form.hora_inicio && form.hora_fim && form.hora_fim < form.hora_inicio) {
+      setFeedback({ type: 'error', message: 'A hora final não pode ser anterior à hora inicial.' });
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await apiFetch('/api/agenda', {
+        method: 'POST',
+        body: JSON.stringify({ ...form, titulo: form.titulo.trim(), observacao: form.observacao.trim() }),
+      });
+      setForm(emptyAgendaForm);
+      await refresh?.();
+      setFeedback({ type: 'ok', message: 'Evento adicionado à agenda.' });
+    } catch (error) {
+      setFeedback({ type: 'error', message: error.message });
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <section className="workspace-view">
       <div className="view-header">
         <div>
           <span className="mini-label">Rotina</span>
           <h2>Agenda acadêmica</h2>
-          <p>Eventos consultados pela ferramenta de agenda durante as respostas.</p>
+          <p>Cadastre aulas, provas, entregas e sessões de estudo para o JARVIS considerar no planejamento.</p>
         </div>
       </div>
+
+      <form className="agenda-form" onSubmit={addEvent}>
+        <label className="form-field wide">
+          <span>Título *</span>
+          <input
+            value={form.titulo}
+            onChange={(event) => updateField('titulo', event.target.value)}
+            placeholder="Ex.: Revisão de RAG"
+            required
+          />
+        </label>
+        <label className="form-field">
+          <span>Data *</span>
+          <input
+            type="date"
+            value={form.data}
+            onChange={(event) => updateField('data', event.target.value)}
+            required
+          />
+        </label>
+        <label className="form-field">
+          <span>Hora inicial</span>
+          <input
+            type="time"
+            value={form.hora_inicio}
+            onChange={(event) => updateField('hora_inicio', event.target.value)}
+          />
+        </label>
+        <label className="form-field">
+          <span>Hora final</span>
+          <input
+            type="time"
+            value={form.hora_fim}
+            min={form.hora_inicio || undefined}
+            onChange={(event) => updateField('hora_fim', event.target.value)}
+          />
+        </label>
+        <label className="form-field">
+          <span>Tipo</span>
+          <select value={form.tipo} onChange={(event) => updateField('tipo', event.target.value)}>
+            <option value="aula">Aula</option>
+            <option value="prova">Prova</option>
+            <option value="entrega">Entrega</option>
+            <option value="revisão">Revisão</option>
+            <option value="estudo">Estudo</option>
+            <option value="outro">Outro</option>
+          </select>
+        </label>
+        <label className="form-field full">
+          <span>Observação</span>
+          <textarea
+            rows={3}
+            value={form.observacao}
+            onChange={(event) => updateField('observacao', event.target.value)}
+            placeholder="Detalhes, materiais ou objetivo da sessão."
+          />
+        </label>
+        <div className="agenda-form-actions full">
+          <button className="primary-button" disabled={saving || !form.titulo.trim() || !form.data}>
+            {saving ? <Loader2 className="spin" size={16} /> : <CalendarDays size={16} />}
+            {saving ? 'Salvando...' : 'Adicionar evento'}
+          </button>
+          {feedback && (
+            <div
+              className={`agenda-feedback ${feedback.type}`}
+              role={feedback.type === 'error' ? 'alert' : 'status'}
+              aria-live="polite"
+            >
+              {feedback.message}
+            </div>
+          )}
+        </div>
+      </form>
+
       <div className="timeline">
         {agenda.map((event, index) => (
           <div className="timeline-item" key={`${event.data}-${index}`}>
             <div className="timeline-dot" />
             <div>
-              <strong>{event.titulo}</strong>
-              <span>{event.data} • {event.hora_inicio || '--:--'} {event.hora_fim ? `até ${event.hora_fim}` : ''}</span>
+              <div className="event-title-row">
+                <strong>{event.titulo}</strong>
+                <span className="event-type">{event.tipo || 'evento'}</span>
+              </div>
+              <span className="event-meta">
+                {event.data} • {event.hora_inicio || 'sem horário'} {event.hora_fim ? `até ${event.hora_fim}` : ''}
+              </span>
               {event.observacao && <p>{event.observacao}</p>}
             </div>
           </div>
         ))}
-        {!agenda.length && <p className="muted">Nenhum evento na agenda.</p>}
+        {!agenda.length && (
+          <div className="empty-state">
+            <CalendarDays size={28} />
+            <strong>Nenhum evento na agenda.</strong>
+            <p>Use o formulário acima para cadastrar a próxima aula, prova, entrega ou revisão.</p>
+          </div>
+        )}
       </div>
     </section>
   );
@@ -711,8 +863,14 @@ function EvidenceCard({ log, index }) {
           <span className="mini-label">Chamada #{index + 1}</span>
           <h3>{humanToolName(log.ferramenta)}</h3>
         </div>
-        <span className={`mode-badge ${diagnostics.isFallback ? 'warning' : diagnostics.isRag ? 'rag' : 'info'}`}>
-          {diagnostics.isFallback ? 'fallback tratado' : diagnostics.isRag ? 'RAG executado' : 'ferramenta executada'}
+        <span className={`mode-badge ${diagnostics.isLlmFallback || diagnostics.isFallback ? 'warning' : diagnostics.isRag ? 'rag' : 'info'}`}>
+          {diagnostics.isLlmFallback
+            ? 'RAG sem LLM'
+            : diagnostics.isFallback
+              ? 'fallback tratado'
+              : diagnostics.isRag
+                ? 'RAG executado'
+                : 'ferramenta executada'}
         </span>
       </div>
 
@@ -739,7 +897,17 @@ function EvidenceCard({ log, index }) {
         </div>
       </div>
 
-      {diagnostics.isFallback && (
+      {diagnostics.isLlmFallback && (
+        <div className="warning-box">
+          <AlertTriangle size={17} />
+          <span>
+            A LLM remota falhou na etapa {output.erro_llm_etapa || 'de geração'}.
+            O RAG local foi executado automaticamente e preservou as evidências recuperadas.
+          </span>
+        </div>
+      )}
+
+      {diagnostics.isFallback && !diagnostics.isLlmFallback && (
         <div className="warning-box">
           <AlertTriangle size={17} />
           <span>Busca executada, mas sem evidência suficiente nos materiais. O JARVIS acionou fallback acadêmico com aviso de fonte.</span>
@@ -824,7 +992,7 @@ function LogsView({ logs }) {
 function ChatWorkspace({ active, ...props }) {
   if (active === 'materiais') return <MaterialsView status={props.status} onRefresh={props.refreshAll} />;
   if (active === 'tarefas') return <TasksView tasks={props.tasks} refresh={props.refreshAll} />;
-  if (active === 'agenda') return <AgendaView agenda={props.agenda} />;
+  if (active === 'agenda') return <AgendaView agenda={props.agenda} refresh={props.refreshAll} />;
   if (active === 'logs') return <LogsView logs={props.logs} />;
   return <ChatPanel {...props} />;
 }
@@ -854,6 +1022,8 @@ export default function App() {
   const selectedMessage = useMemo(() => {
     return [...messages].reverse().find((msg) => msg.role === 'assistant') || null;
   }, [messages]);
+  const llmUnavailable = Boolean(selectedMessage?.fallback_sem_llm)
+    || selectedMessage?.tool_calls?.some((call) => call?.saida?.fallback_sem_llm);
 
   async function refreshAll() {
     try {
@@ -908,6 +1078,7 @@ export default function App() {
         time: formatTime(),
         tool_calls: data.tool_calls || [],
         sources,
+        fallback_sem_llm: Boolean(data.fallback_sem_llm),
       };
       setMessages((prev) => [...prev, assistantMessage]);
       refreshAll();
@@ -951,7 +1122,13 @@ export default function App() {
     <div className="app-shell">
       <Sidebar active={active} setActive={setActive} collapsed={collapsed} setCollapsed={setCollapsed} />
       <main className="main-area">
-        <StatusBar status={status} onRefresh={refreshAll} theme={theme} onToggleTheme={toggleTheme} />
+        <StatusBar
+          status={status}
+          onRefresh={refreshAll}
+          theme={theme}
+          onToggleTheme={toggleTheme}
+          llmUnavailable={llmUnavailable}
+        />
         <div className={`workspace-grid ${inspectorCollapsed ? 'inspector-collapsed' : ''}`}>
           <ChatWorkspace
             active={active}

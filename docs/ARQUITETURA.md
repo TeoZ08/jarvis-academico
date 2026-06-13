@@ -90,7 +90,23 @@ Responsabilidades:
 - executar tool calling;
 - montar resposta final;
 - tratar fallback acadêmico;
+- identificar perguntas acadêmicas por heurística quando a decisão remota falha;
+- acionar o RAG local sem depender de uma segunda chamada à LLM;
 - retornar resposta, fontes e logs para a interface.
+
+Fluxo resiliente:
+
+```text
+Mensagem
+  ↓
+LLM decide ferramentas
+  ├── sucesso → fluxo normal
+  └── falha técnica
+        ↓
+      heurística acadêmica
+        ├── pergunta acadêmica → buscar_material_rag sem LLM
+        └── conversa casual → aviso curto de indisponibilidade
+```
 
 ---
 
@@ -153,6 +169,8 @@ Fluxo:
 Documento → chunking → indexação → recuperação → contexto → resposta
 ```
 
+Quando a LLM está disponível, os chunks recuperados são enviados ao modelo para redação. Quando a LLM falha, o RAG mantém utilidade por meio de uma resposta extrativa determinística: os trechos e fontes são apresentados sem síntese ou conhecimento geral inventado.
+
 ---
 
 ## Tool calling
@@ -172,6 +190,7 @@ Ferramentas principais:
 - `adicionar_tarefa`;
 - `concluir_tarefa`;
 - `consultar_agenda`.
+- `adicionar_evento`.
 
 Cada chamada é registrada com:
 
@@ -180,6 +199,7 @@ Cada chamada é registrada com:
 - entrada;
 - saída;
 - documentos recuperados, quando aplicável.
+- indicação `fallback_sem_llm`, etapa e tipo seguro do erro, quando aplicável.
 
 ---
 
@@ -201,6 +221,7 @@ A interface transforma logs técnicos em evidências legíveis:
 - melhor score;
 - documentos recuperados;
 - fallback acadêmico;
+- fallback RAG sem LLM;
 - JSON bruto.
 
 ---

@@ -29,8 +29,12 @@ Principais endpoints:
 - `POST /api/tasks` — adiciona tarefa.
 - `PATCH /api/tasks/{id}/complete` — conclui tarefa.
 - `GET /api/agenda` — lista agenda.
-- `POST /api/agenda` — adiciona evento.
+- `POST /api/agenda` — adiciona evento com validação de data e intervalo de horário.
 - `GET /api/logs` — exibe logs técnicos.
+
+O frontend usa esses endpoints para manter tarefas, agenda e inspector sincronizados sem recarregar a página. Na Agenda, o usuário pode cadastrar título, data, horários, tipo e observação; o backend exige título/data e rejeita hora final anterior à inicial.
+
+No chat, falhas de autenticação, timeout, conexão ou resposta inválida na etapa de decisão não tornam a base local inacessível. Perguntas acadêmicas acionam o RAG diretamente, e a interface exibe `RAG sem LLM`, fontes, scores e evidências técnicas. Conversas casuais não disparam busca local.
 
 ---
 
@@ -50,6 +54,8 @@ Características:
 - chat principal;
 - painel direito com status, fontes, ferramentas, agenda, tarefas e logs;
 - evidências técnicas visíveis para facilitar a correção do trabalho.
+- formulários compactos com feedback textual de sucesso e erro;
+- estados distintos para RAG fundamentado, fallback acadêmico e RAG sem LLM.
 
 ---
 

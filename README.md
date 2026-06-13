@@ -155,6 +155,10 @@ Formatos previstos:
 
 Os arquivos enviados são processados, divididos em chunks e incorporados ao mecanismo de recuperação.
 
+### Agenda acadêmica
+
+A aba **Agenda** permite cadastrar manualmente aulas, provas, entregas, revisões e sessões de estudo. O formulário aceita título, data, horário inicial/final, tipo e observação. Após salvar, o evento aparece na lista e no inspector lateral sem recarregar a página.
+
 ### Revisão ativa
 
 O sistema permite iniciar sessões de revisão ativa. A ideia é gerar uma pergunta com base nos materiais, receber a resposta do aluno e avaliar a resposta usando a LLM remota.
@@ -183,6 +187,17 @@ Vou responder com meu conhecimento geral da base de dados do modelo.
 ```
 
 Esse comportamento melhora a transparência e reduz o risco de alucinação.
+
+### RAG resiliente sem LLM
+
+Se a LLM remota falhar durante a decisão de ferramentas, o agente aplica uma heurística simples para identificar perguntas acadêmicas e executa `buscar_material_rag` diretamente.
+
+- com evidência local, exibe os trechos recuperados sem reescrita da LLM;
+- sem evidência local, informa que o tema não foi encontrado e que a LLM está indisponível;
+- em conversa casual, não aciona o RAG indevidamente;
+- preserva fontes, scores, chamada de ferramenta e erro técnico seguro nas evidências.
+
+Esse mecanismo não substitui o fluxo principal. A LLM continua decidindo ferramentas e redigindo respostas quando está disponível.
 
 ---
 
@@ -279,9 +294,11 @@ Busca lexical / híbrida
    ↓
 Recuperação dos trechos relevantes
    ↓
-Prompt com contexto
-   ↓
-Resposta gerada pela LLM
+LLM disponível? ── sim ──→ Prompt com contexto → Resposta gerada
+        │
+        não
+        ↓
+Trechos locais exibidos sem reescrita
 ```
 
 ### Estratégias de recuperação
@@ -356,6 +373,7 @@ O sistema implementa tool calling para permitir que a LLM acione ferramentas int
 | `planejar_estudos` | Gera plano de estudos. |
 | `listar_tarefas` | Consulta tarefas acadêmicas. |
 | `consultar_agenda` | Consulta compromissos simulados. |
+| `adicionar_evento` | Registra evento acadêmico na agenda. |
 | `gerar_exercicios` | Cria exercícios com base nos conteúdos. |
 | `iniciar_revisao_ativa` | Gera pergunta para revisão ativa. |
 | `avaliar_resposta_revisao` | Avalia a resposta do aluno. |
@@ -383,11 +401,13 @@ O projeto possui tratamento controlado para diferentes situações.
 | Situação | Tratamento |
 |---|---|
 | Tema fora do dataset | Fallback acadêmico com aviso explícito. |
-| Token inválido | Erro controlado de autenticação. |
-| Timeout | Variável `GEMMA_TIMEOUT_SECONDS`. |
+| Token inválido na decisão | RAG local é acionado para perguntas acadêmicas; o erro seguro orienta verificar `GEMMA_API_KEY`. |
+| Timeout ou conexão externa | RAG local continua disponível e a interface sinaliza `RAG sem LLM`. |
+| Resposta inválida da LLM | Heurística auditável decide se a busca local deve ser executada. |
 | Resposta longa demais | Variável `GEMMA_MAX_TOKENS`. |
 | Problema de integração com LLM | Endpoint `/api/debug/gemma-ping`. |
 | Falta de evidência no RAG | Resposta informa ausência de contexto suficiente. |
+| Horário final anterior ao inicial | API e formulário da Agenda bloqueiam o cadastro. |
 
 ### Diagnóstico da LLM
 

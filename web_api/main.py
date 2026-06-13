@@ -4,6 +4,7 @@ import json
 import os
 import re
 import time
+from datetime import date as DateValue, time as TimeValue
 from pathlib import Path
 from typing import Any
 
@@ -11,7 +12,7 @@ from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from src.agent import JarvisAgent
 from src.config import settings
@@ -175,6 +176,47 @@ class AgendaRequest(BaseModel):
     hora_fim: str = ""
     tipo: str = "aula"
     observacao: str = ""
+
+    @field_validator("titulo")
+    @classmethod
+    def validar_titulo(cls, valor: str) -> str:
+        titulo = valor.strip()
+        if not titulo:
+            raise ValueError("O título do evento é obrigatório.")
+        return titulo
+
+    @field_validator("data")
+    @classmethod
+    def validar_data(cls, valor: str) -> str:
+        try:
+            DateValue.fromisoformat(valor)
+        except ValueError as exc:
+            raise ValueError("A data deve estar no formato AAAA-MM-DD.") from exc
+        return valor
+
+    @field_validator("hora_inicio", "hora_fim")
+    @classmethod
+    def validar_hora(cls, valor: str) -> str:
+        if not valor:
+            return ""
+        if not re.fullmatch(r"\d{2}:\d{2}", valor):
+            raise ValueError("O horário deve estar no formato HH:MM.")
+        try:
+            TimeValue.fromisoformat(valor)
+        except ValueError as exc:
+            raise ValueError("Informe um horário válido.") from exc
+        return valor
+
+    @field_validator("tipo", "observacao")
+    @classmethod
+    def limpar_texto_opcional(cls, valor: str) -> str:
+        return valor.strip()
+
+    @model_validator(mode="after")
+    def validar_intervalo(self) -> "AgendaRequest":
+        if self.hora_inicio and self.hora_fim and self.hora_fim < self.hora_inicio:
+            raise ValueError("A hora final não pode ser anterior à hora inicial.")
+        return self
 
 
 class DificuldadeRequest(BaseModel):
